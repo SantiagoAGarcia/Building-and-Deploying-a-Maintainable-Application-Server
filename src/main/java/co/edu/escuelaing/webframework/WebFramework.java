@@ -2,11 +2,6 @@ package co.edu.escuelaing.webframework;
 
 import java.io.IOException;
 
-/**
- * Public facade of the framework. Application developers register routes
- * and static-file locations here, without ever touching the connection
- * loop inside HttpServer.
- */
 public class WebFramework {
 
     private static final Router router = new Router();
