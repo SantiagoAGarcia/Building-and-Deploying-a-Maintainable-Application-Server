@@ -1,0 +1,24 @@
+body {
+    font-family: Arial, sans-serif;
+    max-width: 600px;
+    margin: 40px auto;
+    padding: 0 20px;
+    color: #222;
+}
+
+h1 {
+    color: #2c3e50;
+}
+
+section {
+    margin-bottom: 20px;
+}
+
+button {
+    cursor: pointer;
+    padding: 6px 12px;
+}
+
+#result, #pi-result {
+    font-weight: bold;
+}
