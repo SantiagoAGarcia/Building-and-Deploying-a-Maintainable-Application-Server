@@ -3,7 +3,6 @@
 A mini web framework built only with the Java standard library (`java.net`, `java.io`). It lets you register `GET` endpoints with **lambdas**, serve static files (including binaries), read its configuration from **environment variables**, shut down gracefully, and deploy to the cloud with Docker.
 
 > **Cloud platform:** AWS EC2 + Docker  
-> **Public URL:** `<PENDING: public URL>`
 
 ## Table of contents
 1. [Description](#1-project-description)
