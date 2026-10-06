@@ -15,10 +15,9 @@ A mini web framework built only with the Java standard library (`java.net`, `jav
 7. [Environment variables](#7-environment-variables)
 8. [AWS deployment](#8-deploying-to-aws-ec2--docker)
 9. [Example URLs](#9-example-urls)
-10. [Evidence](#10-evidence)
-11. [Maintainability](#11-why-the-architecture-is-maintainable)
-12. [Tests](#12-tests-performed)
-13. [Sequential design](#13-design-decision-a-sequential-server)
+10. [Maintainability](#10-why-the-architecture-is-maintainable)
+11. [Tests](#11-tests-performed)
+12. [Sequential design](#12-design-decision-a-sequential-server)
 
 ---
 
@@ -267,52 +266,7 @@ curl -i -X POST http://localhost:8080/pi          # 405 with "Allow: GET"
 
 ---
 
-## 10. Evidence
-
-Screenshots go in `docs/evidence/` with the names shown (until a file exists, its image will appear broken).
-
-### 10.1 Cloud deployment
-
-**Deployed page**  
-![Home page](docs/evidence/01_home_deployed.png)
-
-**Static resource** (`/images/logo.png` or `/styles.css`)  
-![Static resource](docs/evidence/02_static_resource.png)
-
-**REST endpoint 1:** `GET /hello?name=...`  
-![GET hello](docs/evidence/03_hello_endpoint.png)
-
-**REST endpoint 2:** `GET /pi`  
-![GET pi](docs/evidence/04_pi_endpoint.png)
-
-**Configured environment variables:** `GET /env` (shows `APP_ENV=production` and the prefix)  
-![GET env](docs/evidence/05_env_endpoint.png)
-
-**`/shutdown` not available in production (404)**  
-![Shutdown 404](docs/evidence/07_shutdown_prod_404.png)
-
-### 10.2 Local execution
-
-**`/shutdown` in development:** responds `200` and the console prints `Server stopped gracefully.`  
-![Local shutdown](docs/evidence/06_shutdown_dev.png)
-
-### 10.3 Local console output (verified)
-
-Running `java -jar target/mini-web-framework-1.0.0.jar` with `APP_ENV=development`:
-
-```text
-[Application] Environment is 'development'. Registering /shutdown endpoint.
-Server is listening on port 9092. Ready for requests.
-[GET] /shutdown
-[Application] /shutdown invoked. Stopping server gracefully...
-Server stopped gracefully.
-```
-
-With `APP_ENV=production` the log says `/shutdown endpoint is DISABLED` and `GET /shutdown` returns `404 Not Found`.
-
----
-
-## 11. Why the architecture is maintainable
+## 10. Why the architecture is maintainable
 
 | Principle | Where it shows in the code |
 | :--- | :--- |
@@ -327,7 +281,7 @@ With `APP_ENV=production` the log says `/shutdown endpoint is DISABLED` and `GET
 
 ---
 
-## 12. Tests performed
+## 11. Tests performed
 
 **27 JUnit 5 tests** (14 unit + 13 integration): run `mvn clean package` or `mvn test`.
 
@@ -356,7 +310,7 @@ With `APP_ENV=production` the log says `/shutdown endpoint is DISABLED` and `GET
 
 ---
 
-## 13. Design decision: a sequential server
+## 12. Design decision: a sequential server
 
 The lab requires a sequential server: one thread runs `accept()` → handle → close → `accept()`. There are no threads, thread pools or asynchronous NIO. This removes race conditions and makes it visible how connections wait in the TCP backlog.
 
