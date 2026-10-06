@@ -1,0 +1,4 @@
+co\edu\escuelaing\webframework\RouterTest.class
+co\edu\escuelaing\webframework\StaticFileServiceTest.class
+co\edu\escuelaing\webframework\RequestTest.class
+co\edu\escuelaing\webframework\WebFrameworkIntegrationTest.class
