@@ -1,10 +1,42 @@
-target/
-.git
-.gitignore
-.dockerignore
-.idea/
-.vscode/
-*.iml
-*.log
-.env
-docs/
+# ==========================================
+# Multi-stage Dockerfile for Mini Web Framework
+# ==========================================
+
+# Stage 1: Build stage with Maven and JDK 17
+FROM maven:3.9.6-eclipse-temurin-17-alpine AS builder
+
+WORKDIR /build
+
+# Cache Maven dependencies
+COPY pom.xml .
+RUN mvn dependency:go-offline -B
+
+# Copy source code and build executable shaded JAR
+COPY src ./src
+RUN mvn clean package -DskipTests
+
+# ==========================================
+# Stage 2: Minimal Runtime stage with JRE 17
+# ==========================================
+FROM eclipse-temurin:17-jre-alpine
+
+# Non-sensitive defaults. Override at runtime with `docker run -e ...`
+ENV PORT=8080 \
+    APP_ENV=production \
+    GREETING_PREFIX=Hello
+
+WORKDIR /app
+
+# Create a secure, non-privileged user and group
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
+COPY --from=builder /build/target/mini-web-framework-1.0.0.jar app.jar
+RUN chown -R appuser:appgroup /app
+
+USER appuser
+
+EXPOSE 8080
+
+# Exec form: java is PID 1 and receives SIGTERM directly (clean `docker stop`).
+# The application reads PORT, APP_ENV and GREETING_PREFIX from the environment.
+ENTRYPOINT ["java", "-jar", "app.jar"]
