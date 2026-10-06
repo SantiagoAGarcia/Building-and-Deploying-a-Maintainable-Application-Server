@@ -4,135 +4,209 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Map;
 
+/**
+ * Sequential HTTP/1.1 Server.
+ * Runs on a single thread with a single connection accept loop.
+ * Guarantees that each connection is completely served and closed before accepting the next.
+ */
 public class HttpServer {
 
-    private static volatile boolean running = false;
+    private final Router router;
+    private final StaticFileService staticFileService;
+    private volatile boolean running = false;
+    private ServerSocket serverSocket;
+    private int boundPort = 8080;
 
-    private HttpServer() {
+    public HttpServer(Router router, StaticFileService staticFileService) {
+        this.router = router;
+        this.staticFileService = staticFileService;
     }
 
-    public static void start(int port, Router router, StaticFileService staticFileService) throws IOException {
-        running = true;
+    /**
+     * Starts listening on the specified port. Binds to all network interfaces (0.0.0.0).
+     *
+     * @param port the TCP port to listen on
+     */
+    public void start(int port) {
+        this.boundPort = port;
+        this.running = true;
 
-        try (ServerSocket serverSocket = new ServerSocket(port)) {
-            System.out.println("Server listening on port " + port);
+        System.out.println("===============================================================");
+        System.out.println("  Mini Web Framework HTTP Server");
+        System.out.println("  Port: " + port + " | Bound to: 0.0.0.0 (All network interfaces)");
+        System.out.println("  Concurrency: NONE (Strictly Sequential)");
+        System.out.println("===============================================================");
+
+        try {
+            serverSocket = new ServerSocket();
+            serverSocket.setReuseAddress(true);
+            serverSocket.bind(new InetSocketAddress("0.0.0.0", port));
+            this.boundPort = serverSocket.getLocalPort();
+            System.out.println("Server is listening on port " + this.boundPort + ". Ready for requests.");
 
             while (running) {
-                try (Socket clientSocket = serverSocket.accept()) {
-                    handleRequest(clientSocket, router, staticFileService);
+                try {
+                    // Sequential accept loop: one client at a time
+                    Socket clientSocket = serverSocket.accept();
+                    try (clientSocket) {
+                        clientSocket.setSoTimeout(5000); // Protect against slow/hanging clients
+                        handleConnection(clientSocket);
+                    }
+                } catch (SocketTimeoutException ignored) {
+                    // Client read timeout
                 } catch (IOException e) {
-                    System.out.println("Error handling a request: " + e.getMessage());
+                    if (!running) {
+                        break;
+                    }
+                    System.err.println("Connection error: " + e.getMessage());
                 }
             }
+        } catch (IOException e) {
+            if (running) {
+                System.err.println("Fatal server socket error: " + e.getMessage());
+            }
+        } finally {
+            closeServerSocket();
+            System.out.println("Server stopped gracefully.");
         }
-
-        System.out.println("Server stopped gracefully.");
     }
 
-    public static void stop() {
-        running = false;
+    /**
+     * Stops the sequential server loop.
+     */
+    public void stop() {
+        this.running = false;
+        // Do not forcibly terminate the socket immediately here if we are currently handling /shutdown
+        // Let the current request complete its response, then close
     }
 
-    private static void handleRequest(Socket clientSocket, Router router, StaticFileService staticFileService)
-            throws IOException {
-
-        BufferedReader in = new BufferedReader(
-                new InputStreamReader(clientSocket.getInputStream(), StandardCharsets.UTF_8));
-        OutputStream out = clientSocket.getOutputStream();
-
-        String requestLine = in.readLine();
-        if (requestLine == null || requestLine.isBlank()) {
-            writeResponse(out, 400, "text/plain", "400 Bad Request".getBytes(StandardCharsets.UTF_8));
-            return;
-        }
-
-        String header;
-        while ((header = in.readLine()) != null && !header.isBlank()) {
-        }
-
-        String[] parts = requestLine.split(" ");
-        if (parts.length < 2) {
-            writeResponse(out, 400, "text/plain", "400 Bad Request".getBytes(StandardCharsets.UTF_8));
-            return;
-        }
-
-        String method = parts[0];
-        String fullPath = parts[1];
-        String path = fullPath;
-        String rawQuery = null;
-
-        int qIndex = fullPath.indexOf('?');
-        if (qIndex >= 0) {
-            path = fullPath.substring(0, qIndex);
-            rawQuery = fullPath.substring(qIndex + 1);
-        }
-
-        if (!"GET".equalsIgnoreCase(method)) {
-            writeResponse(out, 405, "text/plain", "405 Method Not Allowed".getBytes(StandardCharsets.UTF_8));
-            return;
-        }
-
-        Request request = new Request(method, path, rawQuery);
-        Response response = new Response();
-
-        if (router.hasGetRoute(path)) {
-            handleDynamicRoute(router, request, response, out);
-            return;
-        }
-
-        handleStaticResource(staticFileService, path, out);
+    /**
+     * Forcibly closes the listening server socket if needed (e.g. from background thread during tests).
+     */
+    public synchronized void forceStop() {
+        this.running = false;
+        closeServerSocket();
     }
 
-    private static void handleDynamicRoute(Router router, Request request, Response response, OutputStream out)
-            throws IOException {
+    private synchronized void closeServerSocket() {
+        if (serverSocket != null && !serverSocket.isClosed()) {
+            try {
+                serverSocket.close();
+            } catch (IOException ignored) {
+            }
+        }
+    }
+
+    private void handleConnection(Socket clientSocket) {
         try {
-            String body = router.getService(request.getPath()).handle(request, response);
-            byte[] bodyBytes = (body == null ? "" : body).getBytes(StandardCharsets.UTF_8);
-            writeResponse(out, response.getStatusCode(), response.getContentType(), bodyBytes);
-        } catch (Exception e) {
-            String message = "500 Internal Server Error: " + e.getMessage();
-            writeResponse(out, 500, "text/plain", message.getBytes(StandardCharsets.UTF_8));
+            BufferedReader reader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream(), StandardCharsets.UTF_8));
+            OutputStream out = clientSocket.getOutputStream();
+
+            String requestLine = reader.readLine();
+            if (requestLine == null || requestLine.trim().isEmpty()) {
+                return;
+            }
+
+            String[] parts = requestLine.trim().split("\\s+");
+            if (parts.length < 2) {
+                Response badReq = new Response().status(400, "Bad Request")
+                        .type("text/plain; charset=utf-8")
+                        .body("400 Bad Request: Malformed HTTP request line");
+                badReq.writeTo(out);
+                return;
+            }
+
+            String method = parts[0].toUpperCase();
+            String fullUri = parts[1];
+
+            // Read request headers
+            Map<String, String> headers = new HashMap<>();
+            String headerLine;
+            while ((headerLine = reader.readLine()) != null && !headerLine.isEmpty()) {
+                int colonIdx = headerLine.indexOf(':');
+                if (colonIdx > 0) {
+                    String hName = headerLine.substring(0, colonIdx).trim().toLowerCase();
+                    String hVal = headerLine.substring(colonIdx + 1).trim();
+                    headers.put(hName, hVal);
+                }
+            }
+
+            Request req = new Request(method, fullUri, headers);
+            System.out.printf("[%s] %s%n", req.getMethod(), req.getPath());
+
+            // 1. Method check: Support only GET for this framework specification
+            if (!"GET".equalsIgnoreCase(method)) {
+                Response methodNotAllowed = new Response().status(405, "Method Not Allowed")
+                        .type("text/plain; charset=utf-8")
+                        .header("Allow", "GET")
+                        .body("405 Method Not Allowed");
+                methodNotAllowed.writeTo(out);
+                return;
+            }
+
+            // 2. Dynamic route lookup
+            RouteHandler handler = router.getHandler(method, req.getPath());
+            if (handler != null) {
+                Response resp = new Response();
+                try {
+                    String result = handler.handle(req, resp);
+                    if (result != null && (resp.getBody() == null || resp.getBody().length == 0)) {
+                        resp.body(result);
+                    }
+                    resp.writeTo(out);
+                } catch (Exception e) {
+                    System.err.println("Handler exception on path " + req.getPath() + ": " + e.getMessage());
+                    Response errResp = new Response().status(500, "Internal Server Error")
+                            .type("text/plain; charset=utf-8")
+                            .body("500 Internal Server Error: " + (e.getMessage() != null ? e.getMessage() : "Handler error"));
+                    errResp.writeTo(out);
+                }
+                return;
+            }
+
+            // 3. Static file lookup
+            try {
+                StaticFileService.StaticResource staticFile = staticFileService.resolve(req.getPath());
+                if (staticFile != null) {
+                    Response resp = new Response().status(200, "OK")
+                            .type(staticFile.getContentType())
+                            .body(staticFile.getBytes());
+                    resp.writeTo(out);
+                    return;
+                }
+            } catch (SecurityException se) {
+                // Path traversal detected
+                Response forbidden = new Response().status(400, "Bad Request")
+                        .type("text/plain; charset=utf-8")
+                        .body("400 Bad Request: " + se.getMessage());
+                forbidden.writeTo(out);
+                return;
+            }
+
+            // 4. Neither dynamic route nor static file found -> 404
+            Response notFound = new Response().status(404, "Not Found")
+                    .type("text/plain; charset=utf-8")
+                    .body("404 Not Found");
+            notFound.writeTo(out);
+
+        } catch (IOException e) {
+            System.err.println("I/O error during request handling: " + e.getMessage());
         }
     }
 
-    private static void handleStaticResource(StaticFileService staticFileService, String path, OutputStream out)
-            throws IOException {
-        byte[] resourceBytes = staticFileService.getResourceBytes(path);
-
-        if (resourceBytes == null) {
-            writeResponse(out, 404, "text/plain", "404 Not Found".getBytes(StandardCharsets.UTF_8));
-            return;
-        }
-
-        String contentType = staticFileService.resolveContentType(
-                path.equals("/") ? "/index.html" : path);
-        writeResponse(out, 200, contentType, resourceBytes);
+    public boolean isRunning() {
+        return running;
     }
 
-    private static void writeResponse(OutputStream out, int statusCode, String contentType, byte[] body)
-            throws IOException {
-        String statusText = switch (statusCode) {
-            case 200 -> "OK";
-            case 400 -> "Bad Request";
-            case 404 -> "Not Found";
-            case 405 -> "Method Not Allowed";
-            case 500 -> "Internal Server Error";
-            default -> "";
-        };
-
-        StringBuilder headers = new StringBuilder();
-        headers.append("HTTP/1.1 ").append(statusCode).append(' ').append(statusText).append("\r\n");
-        headers.append("Content-Type: ").append(contentType).append("\r\n");
-        headers.append("Content-Length: ").append(body.length).append("\r\n");
-        headers.append("Connection: close\r\n");
-        headers.append("\r\n");
-
-        out.write(headers.toString().getBytes(StandardCharsets.UTF_8));
-        out.write(body);
-        out.flush();
+    public int getBoundPort() {
+        return boundPort;
     }
 }
